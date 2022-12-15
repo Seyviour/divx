@@ -28,7 +28,7 @@ A sample code looks something like this:
 This is the [script](../bnw/data/gen_codes.py) I used for generating X-codes and here's a [sample]((../bnw/data/samples_v2_4.svg)) page of randomly generated X-codes  
 
 
-![Page of randomly generated x-codes](../bnw/data/samples_v2_4.svg "Randomly generated x-codes")
+![Page of randomly generated x-codes](../bnw/data/sample_codes/samples_v2_4.svg "Randomly generated x-codes")
 <!-- <img src="../bnw/data/samples_v2_4.svg" width="400" height="400"> -->
 
 *The script is quite crude. There's some copy-pasting that happens between the script output and the final page*
