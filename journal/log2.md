@@ -74,7 +74,7 @@ Following this, decoding proceeds roughly as follows:
 
 
 ## Onward/To-do
-1. Port the decoding algorithm to C
+1. Port the decoding algorithm to C/C++
 2. Bluetooth connection (*insert crying emoji*)
 3. Figure out a way to make readings consistent
 4. Figure out a means to adapt to print surfaces/materials that have reflectances that are different from the test-prints
