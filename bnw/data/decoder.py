@@ -1,6 +1,6 @@
 from bisect import bisect_left
 import math
-
+import os
 
 class CountDecoder():
     """
@@ -11,7 +11,7 @@ class CountDecoder():
         threshold: float -> minimum count (as % of first count) to be accepted as a valid code
         window_width: int -> window-width for calculating running averages
     """
-    def __init__(self, buckets, threshold=0.50, window_width=16):
+    def __init__(self, buckets, threshold=0.15, window_width=16):
         self.buckets = buckets
         self.threshold = threshold
         self.window_width = window_width
@@ -56,6 +56,7 @@ class CountDecoder():
             sequence: Iterable -> iterable of adc readings
         """
         
+        prev_dec = 9
         f = open("log", "w") # for debugging TODO: Formalize or remove
         for reading in sequence:
             self._window_sum += reading - self._window[self._window_idx]
@@ -85,7 +86,9 @@ class CountDecoder():
                     # print(self._count)
                     
                     if self._count >= self._hold_time  and self._prev_bucket%2:
-                        print(self._prev_bucket, self._count, self._hold_time)
+                        if self._prev_bucket != prev_dec: 
+                            print(self._prev_bucket, self._count, self._hold_time)
+                            prev_dec = self._prev_bucket
                     self._count = 1
 
                         
@@ -132,15 +135,21 @@ if __name__ == "__main__":
     """
 
     buckets = {
-    0: (0, 100),
-    1: (140, 500),
-    2: (1150, 1800),
+    0: (0, 64),
+    1: (140, 200),
+    2: (1500, 1750),
     3: (2400, 2650),
-    4: (2800, 3100)
+    4: (2850, 3100)
 }
+    
+    script_dir = os.path.dirname(__file__)
+    rel_path = "sample_reads/sample_reads3.txt"
+    abs_file_path = os.path.join(script_dir, rel_path)
+
+
     this_decoder = CountDecoder(buckets)
 
-    with open(r"sample_reads2.txt", "r") as f:
+    with open(abs_file_path, "r") as f:
         samples = f.readlines()
         samples = [int(x) for x in samples]
 
