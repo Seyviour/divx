@@ -9,12 +9,13 @@ The general approach I used was to generate a sequence of rectangles(svg), each 
 
 A sample code looks something like this: 
 
-<img src="/home/saviour/projects/divx/journal/sample_xcode.png" width="200" height="20">
+![Sample x-code](sample_xcode.png "Sample x-code")
+<!-- <img src="/home/saviour/projects/divx/journal/sample_xcode.png" width="200" height="20"> -->
 
 
 
-*I'll use "letter" to represent the shades in a palette here on out*
-*I'll use w-white and b-black to represent the lightest shade and darkest shade in the pallete respectively*
+\**I'll use "letter" to represent the shades in a palette here on out*  
+\**I'll use w-white and b-black to represent the lightest shade and darkest shade in the palette respectively*
 
 
 ### Constraints on X-Code Generation 
@@ -24,9 +25,10 @@ A sample code looks something like this:
 3. The same letter cannot appear in consecutive places -- I think this makes decoding easier for pen-type scanners since it makes it easy to tell where one letter ends and another begins. The downside of this constraint is that it reduces the number of possible x-codes.
 4. As long as the first 3 constraints are satisfied, there is no constraint on how many letters may be in an x-code.
 
-This is the [script](../bnw/data/gen_codes.py) I used for generating X-codes and here's a [sample]((../bnw/data/samples_v2_4.svg)) page of generated X-codes
+This is the [script](../bnw/data/gen_codes.py) I used for generating X-codes and here's a [sample]((../bnw/data/samples_v2_4.svg)) page of randomly generated X-codes
 
-<img src="../bnw/data/samples_v2_4.svg" width="400" height="400">
+![Page of randomly generated x-codes](../bnw/data/samples_v2_4.svg "Randomly generated x-codes")
+<!-- <img src="../bnw/data/samples_v2_4.svg" width="400" height="400"> -->
 
 *The script is quite crude. There's some copy-pasting that happens between the script output and the final page*
 
@@ -40,7 +42,8 @@ I got an Esp32 dev board (like I mentioned in the last log). To generate data, I
 
 Plotted with Matplotlib, the collected data looks something like this:
 
-<img src="sample_plot.png" width="800" height="400">
+![Sample plot of x-code](sample_plot.png "Sample x-code plot in matplotlib")
+<!-- <img src="sample_plot.png" width="800" height="400"> -->
 
 
 ## Decoding
