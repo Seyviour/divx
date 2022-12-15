@@ -25,7 +25,8 @@ A sample code looks something like this:
 3. The same letter cannot appear in consecutive places -- I think this makes decoding easier for pen-type scanners since it makes it easy to tell where one letter ends and another begins. The downside of this constraint is that it reduces the number of possible x-codes.
 4. As long as the first 3 constraints are satisfied, there is no constraint on how many letters may be in an x-code.
 
-This is the [script](../bnw/data/gen_codes.py) I used for generating X-codes and here's a [sample]((../bnw/data/samples_v2_4.svg)) page of randomly generated X-codes
+This is the [script](../bnw/data/gen_codes.py) I used for generating X-codes and here's a [sample]((../bnw/data/samples_v2_4.svg)) page of randomly generated X-codes  
+
 
 ![Page of randomly generated x-codes](../bnw/data/samples_v2_4.svg "Randomly generated x-codes")
 <!-- <img src="../bnw/data/samples_v2_4.svg" width="400" height="400"> -->
