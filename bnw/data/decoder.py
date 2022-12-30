@@ -2,6 +2,71 @@ from bisect import bisect_left
 import math
 import os
 
+
+class BinDecoder():
+    """Bin-based decocder for x-codes
+
+    I think this is the one :)
+
+    Constructor Parameters:
+        num_bins: number of bins to use, should be a power of 2 less than (2**ADC_WIDTH)
+        threshold_dist: Distance from max_bin at which threshold factor should be applied
+        threshold_factor: 
+        
+    """
+
+    def __init__(self, num_bins, threshold_factor, threshold_dist, VALUE_WIDTH):
+        self.bins = [0] * num_bins
+        self.threshold_factor = threshold_factor
+        self.threshold_dist = threshold_dist
+        self.shift = VALUE_WIDTH - int(math.log(num_bins, 2))
+        self.prev_bin = -1
+        self.max_bin = 0 #bin with most values in a decoding sub-frame 
+
+
+    def __clear_bins(self):
+        """
+        Reset decoder parameters to decode next letter
+        """
+        for i in range(len(self.bins)):
+            self.bins[i] = 0
+        self.max_bin = -1
+        self.prev_bin = -1
+    
+    def decode(self, sequence):
+
+        """
+        Decode a sequence of ADC readings.
+
+        Arguments:
+            sequence: Iterable of integer values 
+        """
+        f = open("bin_decoder.log", "w") # for debugging TODO: Formalize or remove
+        print("logging output to bin_decoder.log")
+
+        for reading in sequence: 
+            bin = reading >> self.shift
+            # print(bin)
+            self.bins[bin] += 1
+
+            if self.bins[bin] > self.bins[self.max_bin]:
+                self.max_bin = bin
+
+            if self.max_bin == -1:
+                self.max_bin = bin 
+
+            if self.prev_bin == -1:
+                self.prev_bin = bin
+            else:
+                if abs(bin-self.max_bin) >= self.threshold_dist:
+                    direction = 1 if bin > self.max_bin else -1
+                    if self.bins[bin - direction] < (self.bins[self.max_bin]//self.threshold_factor):
+                        f.write(str(self.max_bin) + "\n")
+                        # f.write(str(self.max_bin) + " " + str(self.bins[self.max_bin]) + "\n")
+                        self.__clear_bins()  
+
+        f.close()
+
 class CountDecoder():
     """
     Count-based decoder for x-codes
@@ -57,7 +122,8 @@ class CountDecoder():
         """
         
         prev_dec = 9
-        f = open("log", "w") # for debugging TODO: Formalize or remove
+        f = open("count_decoder.log", "w") # for debugging TODO: Formalize or remove
+        print("logging output to 'count_decoder.log'")
         for reading in sequence:
             self._window_sum += reading - self._window[self._window_idx]
             self._window_ave = self._window_sum >> self._window_shift_div
@@ -69,7 +135,7 @@ class CountDecoder():
             if self._hold_time == -1:
                 if bucket == self._bucket_list[-2] and self._seen_peak:
                     self._hold_time = int(self.threshold * self._count)
-                    print(self._hold_time,"\n")
+                    # print(self._hold_time,"\n")
                     self._count = 0
                 if bucket == self._bucket_list[-1]:
                     self._seen_peak = True
@@ -80,14 +146,14 @@ class CountDecoder():
                 if bucket == self._prev_bucket:
                     self._count += 1
                     if (self._count >= self._hold_time) and (bucket == 1):
-                        print("\n")
+                        # print("\n")
                         self.reset()
                 else:
                     # print(self._count)
                     
                     if self._count >= self._hold_time  and self._prev_bucket%2:
                         if self._prev_bucket != prev_dec: 
-                            print(self._prev_bucket, self._count, self._hold_time)
+                            # print(self._prev_bucket, self._count, self._hold_time)
                             prev_dec = self._prev_bucket
                     self._count = 1
 
@@ -121,18 +187,6 @@ class CountDecoder():
         
 if __name__ == "__main__":
 
-    """
-    It ain't much but it's honest work :?
-
-    I wrote this v1 today; Needs a lot of refining but approach shows promise 
-    Committing now because it feels like a fitting end to the day :P
-
-    I've tried to be a bit resource conscious in how this is written as this 
-    will have to be translated to C: only 1 multiply and no divides :)
-    Sliding window is 16 values wide. At 32bits/integer -> 64 bytes
-    It's likely that 16bits/integer will do so 32 bytes should be possible
-    Now, I'm rambling. 
-    """
 
     buckets = {
     0: (0, 64),
@@ -146,31 +200,15 @@ if __name__ == "__main__":
     rel_path = "sample_reads/sample_reads3.txt"
     abs_file_path = os.path.join(script_dir, rel_path)
 
-
-    this_decoder = CountDecoder(buckets)
-
     with open(abs_file_path, "r") as f:
         samples = f.readlines()
         samples = [int(x) for x in samples]
 
-    
-    this_decoder.decode(samples)
 
-    
-                
+    ## Run count decoder. Logs output to count_decoder.log
+    count_decoder = CountDecoder(buckets)
+    count_decoder.decode(samples)
 
-                    
-                
-                
-                
-
-
-
-
-
-
-        
-    
-
-
-
+    ## Run Bin Decoder. Logs output to bin_decoder.log
+    bin_decoder = BinDecoder(num_bins=512, threshold_factor=2, threshold_dist=4, VALUE_WIDTH=12)
+    bin_decoder.decode(samples)                 
