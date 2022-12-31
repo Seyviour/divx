@@ -16,35 +16,89 @@
 #include "freertos/semphr.h"
 #include "esp_adc/adc_continuous.h"
 
-#define EXAMPLE_READ_LEN   256
+
+//DMA BUFFER SIZE 
+#define READ_LEN   256
+
 #define GET_UNIT(x)        ((x>>3) & 0x1)
 
+//ADC RELATED
 #if CONFIG_IDF_TARGET_ESP32
 #define ADC_CONV_MODE       ADC_CONV_SINGLE_UNIT_1  //ESP32 only supports ADC1 DMA mode
 #define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE1
-#elif CONFIG_IDF_TARGET_ESP32S2
-#define ADC_CONV_MODE       ADC_CONV_BOTH_UNIT
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
-#elif CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32H2 || CONFIG_IDF_TARGET_ESP32C2
-#define ADC_CONV_MODE       ADC_CONV_ALTER_UNIT     //ESP32C3 only supports alter mode
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
-#elif CONFIG_IDF_TARGET_ESP32S3
-#define ADC_CONV_MODE       ADC_CONV_BOTH_UNIT
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
-#endif
-
-#if CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32H2 || CONFIG_IDF_TARGET_ESP32C2
-static adc_channel_t channel[3] = {ADC_CHANNEL_2, ADC_CHANNEL_3, (ADC_CHANNEL_0 | 1 << 3)};
-#endif
-#if CONFIG_IDF_TARGET_ESP32S2
-static adc_channel_t channel[3] = {ADC_CHANNEL_2, ADC_CHANNEL_3, (ADC_CHANNEL_0 | 1 << 3)};
-#endif
-#if CONFIG_IDF_TARGET_ESP32
 static adc_channel_t channel[1] = {ADC_CHANNEL_6};
 #endif
 
+//
+
+#define NUMBER_DECODE_BINS 256
+#define BIN_HISTORY_SIZE 4
+#define MOVING_AVERAGE_WINDOW_WIDTH 32
+
 static TaskHandle_t s_task_handle;
 static const char *TAG = "EXAMPLE";
+
+
+enum decode_state{
+    BUSY,
+    IDLE 
+} ; 
+
+typedef struct {
+    bool peak_seen; 
+    enum decode_state state;
+    uint16_t decode_bins[NUMBER_DECODE_BINS];
+    uint16_t prev_bin; 
+    uint16_t max_bin;
+    uint16_t threshold_factor;
+    uint16_t threshold_dist;
+    uint16_t prev_log; 
+}decode_frame_t; 
+
+void x_reset(decode_frame_t *decode_frame){
+    decode_frame->peak_seen = false; 
+    memset(decode_frame->decode_bins, 0x00, 512);
+    decode_frame->prev_bin = 0;
+    decode_frame->max_bin = 0;
+}
+
+
+void x_decode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
+    // x_df -> x_code decode frame 
+    for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
+        adc_digi_output_data_t *p = (void*)&adc_stream[i];
+        uint16_t this_reading = p->type1.data;
+        uint8_t bin = this_reading >> 4; 
+        x_df->decode_bins[bin] += 1;
+
+        
+        if (x_df->decode_bins[bin] > x_df->decode_bins[x_df->max_bin]){
+            x_df->max_bin = bin;
+            x_df->prev_bin = bin;
+            return; 
+        }
+
+        if (bin == x_df->prev_bin ) return;
+
+        // If I'm here then the current bin is not the max_bin
+
+        uint8_t direction = (bin > x_df->max_bin)? 1: 0; 
+        uint16_t dist = (direction == 1)? (bin - x_df->max_bin): (x_df->max_bin-bin);
+
+
+        if ((x_df->decode_bins[x_df->max_bin] > 500) && (dist >= 3)){
+            uint16_t check_bin = (direction == 1)? (bin - 1): (bin+1);
+            if (x_df->decode_bins[check_bin] <= (x_df->decode_bins[x_df->max_bin] << 2)){
+                if (x_df->max_bin != x_df->prev_log){
+                    ESP_LOGI(TAG, "%" PRIu16 "\n", x_df->max_bin);
+                    x_df->prev_log = x_df->max_bin;
+                    x_reset(x_df); 
+                }
+            }    
+        }   
+    }
+
+}
 
 
 static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
@@ -62,7 +116,7 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
 
     adc_continuous_handle_cfg_t adc_config = {
         .max_store_buf_size = 1024,
-        .conv_frame_size = EXAMPLE_READ_LEN,
+        .conv_frame_size = READ_LEN,
     };
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
 
@@ -107,8 +161,8 @@ void app_main(void)
 {
     esp_err_t ret;
     uint32_t ret_num = 0;
-    uint8_t result[EXAMPLE_READ_LEN] = {0};
-    memset(result, 0xcc, EXAMPLE_READ_LEN);
+    uint8_t result[READ_LEN] = {0};
+    memset(result, 0xcc, READ_LEN);
 
     s_task_handle = xTaskGetCurrentTaskHandle();
 
@@ -120,6 +174,16 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
     ESP_ERROR_CHECK(adc_continuous_start(handle));
+
+
+
+    decode_frame_t decode_frame = {
+        .state = IDLE,
+        .threshold_factor = 0,
+        .threshold_dist = 0,
+        .prev_log = 0
+    };
+    x_reset(&decode_frame); 
 
     while(1) {
 
@@ -134,26 +198,17 @@ void app_main(void)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         while (1) {
-            ret = adc_continuous_read(handle, result, EXAMPLE_READ_LEN, &ret_num, 0);
-            int frame_sum = 0;
-            int num_samples = 0; 
+            ret = adc_continuous_read(handle, result, READ_LEN, &ret_num, 0);
+            // int num_samples = 0; 
             if (ret == ESP_OK) {
-                ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32, ret, ret_num);
-                int i; 
-                for (i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
-                    adc_digi_output_data_t *p = (void*)&result[i];
-                    frame_sum += p->type1.data;
-                    num_samples += 1; 
-                    // ESP_LOGI(TAG, "Unit: %d, Channel: %d, Value: %d", 1, p->type1.channel, p->type1.data);
-                }
-                ESP_LOGI(TAG, "Unit: %d, Value: %d", 1, frame_sum/num_samples);
-
+                // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32, ret, ret_num);
+                x_decode(&decode_frame, &result, ret_num); 
                 /**
                  * Because printing is slow, so every time you call `ulTaskNotifyTake`, it will immediately return.
                  * To avoid a task watchdog timeout, add a delay here. When you replace the way you process the data,
                  * usually you don't need this delay (as this task will block for a while).
                  */
-                vTaskDelay(100);
+                // vTaskDelay(100);
             } else if (ret == ESP_ERR_TIMEOUT) {
                 //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
                 break;
