@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_adc/adc_continuous.h"
+#include "diff_decoding.h"
 
 
 //DMA BUFFER SIZE 
@@ -40,63 +41,15 @@ static const char *TAG = "EXAMPLE";
 
 
 enum decode_state{
-    BUSY,
-    IDLE 
+    IDLE,
+    LETTER_DETECT,
+    WORD_DECODE
 } ; 
-
-typedef struct {
-    bool peak_seen; 
-    enum decode_state state;
-    uint16_t decode_bins[NUMBER_DECODE_BINS];
-    uint16_t prev_bin; 
-    uint16_t max_bin;
-    uint16_t threshold_factor;
-    uint16_t threshold_dist;
-    uint16_t prev_log; 
-}decode_frame_t; 
-
-void x_reset(decode_frame_t *decode_frame){
-    decode_frame->peak_seen = false; 
-    memset(decode_frame->decode_bins, 0x00, 512);
-    decode_frame->prev_bin = 0;
-    decode_frame->max_bin = 0;
-}
 
 
 void x_decode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
     // x_df -> x_code decode frame 
-    for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
-        adc_digi_output_data_t *p = (void*)&adc_stream[i];
-        uint16_t this_reading = p->type1.data;
-        uint8_t bin = this_reading >> 4; 
-        x_df->decode_bins[bin] += 1;
-
-        
-        if (x_df->decode_bins[bin] > x_df->decode_bins[x_df->max_bin]){
-            x_df->max_bin = bin;
-            x_df->prev_bin = bin;
-            return; 
-        }
-
-        if (bin == x_df->prev_bin ) return;
-
-        // If I'm here then the current bin is not the max_bin
-
-        uint8_t direction = (bin > x_df->max_bin)? 1: 0; 
-        uint16_t dist = (direction == 1)? (bin - x_df->max_bin): (x_df->max_bin-bin);
-
-
-        if ((x_df->decode_bins[x_df->max_bin] > 500) && (dist >= 3)){
-            uint16_t check_bin = (direction == 1)? (bin - 1): (bin+1);
-            if (x_df->decode_bins[check_bin] <= (x_df->decode_bins[x_df->max_bin] << 2)){
-                if (x_df->max_bin != x_df->prev_log){
-                    ESP_LOGI(TAG, "%" PRIu16 "\n", x_df->max_bin);
-                    x_df->prev_log = x_df->max_bin;
-                    x_reset(x_df); 
-                }
-            }    
-        }   
-    }
+    incrementalDecode(x_df, adc_stream, ret_num); 
 
 }
 
@@ -115,7 +68,7 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
     adc_continuous_handle_t handle = NULL;
 
     adc_continuous_handle_cfg_t adc_config = {
-        .max_store_buf_size = 1024,
+        .max_store_buf_size = 2048,
         .conv_frame_size = READ_LEN,
     };
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
@@ -177,13 +130,8 @@ void app_main(void)
 
 
 
-    decode_frame_t decode_frame = {
-        .state = IDLE,
-        .threshold_factor = 0,
-        .threshold_dist = 0,
-        .prev_log = 0
-    };
-    x_reset(&decode_frame); 
+    decode_frame_t decode_frame; 
+    x_initialize(&decode_frame); 
 
     while(1) {
 
