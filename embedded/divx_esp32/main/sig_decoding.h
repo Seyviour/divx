@@ -12,8 +12,16 @@
 #define BIN_WINDOW_SIZE 8
 #define NUMBER_DECODE_BINS 256
 #define x_df_THRESHOLD 2
+#define x_SIG_THRESHOLD 32
 
 
+
+enum decode_state {
+    IDLE,
+    DECLARATION,
+    MESSAGE, 
+    TERMINATION,   
+} ; 
 
 typedef struct {
     uint8_t start;
@@ -24,7 +32,8 @@ typedef struct {
 
 typedef struct {
 
-
+    enum decode_state decode_state; 
+    char decode_history[32]; 
     uint8_t emit_history[32]; 
     uint8_t num_emits; 
     uint16_t bin_width;
@@ -43,7 +52,6 @@ typedef struct {
     uint16_t bin_window[BIN_WINDOW_SIZE];
     uint16_t bin_window_idx;
     uint32_t bin_window_sum;
-    int8_t pattern[NUMBER_DECODE_BINS];
 
     detect_pattern_t old_pattern; 
     detect_pattern_t detect_patterns[2]; 
@@ -62,10 +70,7 @@ void x_determine(decode_frame_t *x_df, uint8_t resolve_idx);
 void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
     ESP_LOGI("DEBUG", "CALLING INCREMENTAL DECODE");
 
-     ESP_LOGI("DEBUG", "DECODE BINS"); 
-    for (int j = 0; j<256; j++){
-        printf("%04"PRIu16" ", x_df->decode_bins[j]); 
-    } 
+     
     for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
         adc_digi_output_data_t *p = (void*)&adc_stream[i];
         uint16_t reading = p->type1.data;
@@ -93,9 +98,14 @@ void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_n
 
 uint8_t pickBins(decode_frame_t *x_df){
 
+    ESP_LOGI("DEBUG", "DECODE BINS"); 
+    for (int j = 0; j<256; j++){
+        printf("%04"PRIu16" ", x_df->decode_bins[j]); 
+    }
+
     uint8_t sig_seen = 0; 
     for (int i = 0; i < NUMBER_DECODE_BINS; i++){
-        if (x_df -> decode_bins[i] >= 16) {
+        if (x_df -> decode_bins[i] >= x_SIG_THRESHOLD) {
             x_df -> detect_patterns[sig_seen].start = i;
             x_df -> detect_patterns[sig_seen].max = i;
             x_df -> detect_patterns[sig_seen].valid = true; 
@@ -155,14 +165,43 @@ void x_resolve_reset(decode_frame_t *x_df){
 
 void x_determine(decode_frame_t *x_df, uint8_t resolve_idx){
 
-    if (x_df->num_emits < 12){
-        x_df->emit_history[x_df->num_emits]=x_df->detect_patterns[resolve_idx].max;
-        x_df->num_emits += 1;
+    if (x_df->num_emits >= 32){
+        ESP_LOGI("DEBUG", "Exceeded buffer size for decoding"); 
     }
+
+    const detect_pattern_t current_pattern = x_df->detect_patterns[resolve_idx];
+
+    if (x_df->decode_state != MESSAGE && x_df->num_emits>=3 && current_pattern.max < x_df->emit_history[x_df->num_emits-1]){
+        x_df->decode_state = MESSAGE; 
+    }
+
+    uint16_t min_dist = UINT16_MAX;
+    uint16_t curr_dist; 
+    unsigned char letter = '.';
+
+    
+
+    if (x_df->decode_state == MESSAGE){
+        for (uint8_t i = 0; i < x_df->num_emits; i++){
+            if ((curr_dist = abs_diff(current_pattern.max, x_df->emit_history[i])) < min_dist){
+                letter = x_df->decode_history[i];
+                min_dist = curr_dist; 
+            }
+        }
+    } else if (x_df->decode_state == DECLARATION) {
+        letter = (unsigned char) ('A' + x_df->num_emits);
+    }
+
+    x_df->decode_history[x_df->num_emits] = letter;
+    
+    x_df->emit_history[x_df->num_emits]=x_df->detect_patterns[resolve_idx].max;
+    x_df->num_emits += 1;
+    
     ESP_LOGI("DEBUG", "EMIT HISTORY");
 
     for (uint8_t i = 0; i<12; i++){
-        printf("%04"PRIu8" ", x_df->emit_history[i]); 
+        printf("%04"PRIu8" ", x_df->emit_history[i]);
+        printf("%c", x_df->decode_history[i]);  
     }
 }
 
@@ -188,12 +227,16 @@ void x_reset(decode_frame_t *x_df, uint8_t reset_type, uint8_t preserve_start, u
 
     // ttoi, I could have used memset
     if(reset_type==1){
-        for (uint16_t i = 0; (i<preserve_start && i<NUMBER_DECODE_BINS);  i++){
+        for (uint16_t i = 0; (i<preserve_start);  i++){
             x_df->decode_bins[i] = 0;
         }
-        for (uint16_t i = preserve_end; i < NUMBER_DECODE_BINS; i++){
+        for (uint16_t i = preserve_end+1; i < NUMBER_DECODE_BINS; i++){
             x_df->decode_bins[i] = 0; 
         }
+    }
+
+    if (reset_type ==0){
+        x_df->decode_state = IDLE; 
     }
 
     x_df->detect_patterns[0].valid = false;
@@ -209,5 +252,4 @@ void x_reset(decode_frame_t *x_df, uint8_t reset_type, uint8_t preserve_start, u
     x_df->bin_window_idx = 0;
     x_df->bin_window_sum = 0;
 
-    memset(x_df->pattern, 0x00, sizeof(x_df->pattern[0])*NUMBER_DECODE_BINS); 
 }
