@@ -15,7 +15,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_adc/adc_continuous.h"
-#include "diff_decoding.h"
+#include "sig_decoding.h"
 
 
 //DMA BUFFER SIZE 
@@ -40,11 +40,7 @@ static TaskHandle_t s_task_handle;
 static const char *TAG = "EXAMPLE";
 
 
-enum decode_state{
-    IDLE,
-    LETTER_DETECT,
-    WORD_DECODE
-} ; 
+
 
 
 void x_decode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
