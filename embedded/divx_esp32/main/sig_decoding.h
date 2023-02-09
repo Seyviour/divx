@@ -6,13 +6,13 @@
 / 16 is significant
 */
 
-#define x_CADENCE 256
+#define x_CADENCE 1024
 #define x_SHIFT_FACTOR 3 
 #define CAPTURE_WINDOW_SIZE 8
 #define BIN_WINDOW_SIZE 8
 #define NUMBER_DECODE_BINS 256
 #define x_df_THRESHOLD 2
-#define x_SIG_THRESHOLD 32
+#define x_SIG_THRESHOLD 192
 
 
 
@@ -24,6 +24,7 @@ enum decode_state {
 } ; 
 
 typedef struct {
+    uint16_t activation; 
     uint8_t start;
     uint8_t max;
     uint8_t end;
@@ -79,6 +80,7 @@ void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_n
         x_df->capture_window_idx = (x_df->capture_window_idx>=CAPTURE_WINDOW_SIZE-1)?
                                         0 : x_df->capture_window_idx+1;
         uint16_t bin = (x_df->capture_window_sum >> 3) >> 4;
+        // uint16_t bin = reading >> 4; 
 
         //NAIVE OVERFLOW HANDLING
         if (x_df->decode_bins[bin]<UINT16_MAX)
@@ -103,21 +105,30 @@ uint8_t pickBins(decode_frame_t *x_df){
         printf("%04"PRIu16" ", x_df->decode_bins[j]); 
     }
 
+    // x_df->detect_patterns[0].valid = false;
+    // x_df->detect_patterns[1].valid = false; 
+    // return 0; 
+
     uint8_t sig_seen = 0; 
     for (int i = 0; i < NUMBER_DECODE_BINS; i++){
         if (x_df -> decode_bins[i] >= x_SIG_THRESHOLD) {
+            uint16_t cum_sum = x_df -> decode_bins[i]; 
             x_df -> detect_patterns[sig_seen].start = i;
             x_df -> detect_patterns[sig_seen].max = i;
-            x_df -> detect_patterns[sig_seen].valid = true; 
             i++;
-            while (x_df->decode_bins[i] >= 16) {
+            while (x_df->decode_bins[i] >= x_SIG_THRESHOLD>>1) {
+                cum_sum += x_df -> decode_bins[i]; 
                 i++;
                 if (x_df->decode_bins[i]>x_df->decode_bins[x_df->detect_patterns[sig_seen].max])
                     x_df->detect_patterns[sig_seen].max = i;
             };
             --i;
-            x_df->detect_patterns[sig_seen].end = i; 
-            sig_seen += 1; 
+            x_df->detect_patterns[sig_seen].end = i;
+            if (cum_sum > x_SIG_THRESHOLD << 1){
+                x_df->detect_patterns[sig_seen].activation = cum_sum; 
+                sig_seen += 1;
+            }
+             
         }
     }
 
@@ -154,8 +165,8 @@ void x_resolve_reset(decode_frame_t *x_df){
 
        ESP_LOGI("DETECTION EVENT", "OLD PATTERN ""%"PRIu8" %"PRIu8" %"PRIu8, x_df->old_pattern.start, x_df->old_pattern.max, x_df->old_pattern.end); 
 
-        ESP_LOGI("DETECTION EVENT", "EMIT %"PRIu8" %"PRIu8" %"PRIu8, x_df->detect_patterns[emit].start, x_df->detect_patterns[emit].max, x_df->detect_patterns[emit].end); 
-        ESP_LOGI("DETECTION EVENT", "PRESERVE ""%"PRIu8" %"PRIu8" %"PRIu8, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].max, x_df->detect_patterns[retain].end); 
+        ESP_LOGI("DETECTION EVENT", "EMIT %"PRIu8" %"PRIu8" %"PRIu8" %"PRIu16, x_df->detect_patterns[emit].start, x_df->detect_patterns[emit].max, x_df->detect_patterns[emit].end, x_df->detect_patterns[emit].activation); 
+        ESP_LOGI("DETECTION EVENT", "PRESERVE ""%"PRIu8" %"PRIu8" %"PRIu8" %"PRIu16, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].max, x_df->detect_patterns[retain].end, x_df->detect_patterns[retain].activation); 
         x_df->old_pattern = x_df->detect_patterns[retain];
         x_determine(x_df, emit);
         x_reset(x_df, 1, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].end);
@@ -208,6 +219,9 @@ void x_determine(decode_frame_t *x_df, uint8_t resolve_idx){
 void x_initialize(decode_frame_t *x_df){
 
     // THESE SHOULD BE ARGUMENTS
+    memset(x_df->capture_window, 0x00, sizeof(x_df->capture_window[1])*CAPTURE_WINDOW_SIZE); 
+    x_df->capture_window_sum = 0;
+    x_df->capture_window_idx = 0;
     x_df->bin_width = 12;
     x_df->shift_factor = 3;
     x_df->cadence = 256;
@@ -242,9 +256,7 @@ void x_reset(decode_frame_t *x_df, uint8_t reset_type, uint8_t preserve_start, u
     x_df->detect_patterns[0].valid = false;
     x_df->detect_patterns[1].valid = false; 
 
-    memset(x_df->capture_window, 0x00, sizeof(x_df->capture_window[1])*CAPTURE_WINDOW_SIZE); 
-    x_df->capture_window_sum = 0;
-    x_df->capture_window_idx = 0;
+    
 
     x_df->frame_count = 0;
 
