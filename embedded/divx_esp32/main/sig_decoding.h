@@ -6,14 +6,15 @@
 / 16 is significant
 */
 
-#define x_CADENCE 1024
+#define x_HISTORY_SIZE 32
+#define x_CADENCE 768
 #define x_SHIFT_FACTOR 3 
-#define CAPTURE_WINDOW_SIZE 8
+#define CAPTURE_WINDOW_SIZE 128
 #define BIN_WINDOW_SIZE 8
 #define NUMBER_DECODE_BINS 256
 #define x_df_THRESHOLD 2
-#define x_SIG_THRESHOLD 192
-
+#define x_SIG_THRESHOLD 300
+#define x_type uint8_t
 
 
 enum decode_state {
@@ -24,7 +25,6 @@ enum decode_state {
 } ; 
 
 typedef struct {
-    uint16_t activation; 
     uint8_t start;
     uint8_t max;
     uint8_t end;
@@ -32,10 +32,10 @@ typedef struct {
 } detect_pattern_t;
 
 typedef struct {
-
+    uint32_t num_samples; 
     enum decode_state decode_state; 
-    char decode_history[32]; 
-    uint8_t emit_history[32]; 
+    char decode_history[x_HISTORY_SIZE]; 
+    uint8_t emit_history[x_HISTORY_SIZE]; 
     uint8_t num_emits; 
     uint16_t bin_width;
     uint16_t shift_factor;
@@ -70,7 +70,8 @@ void x_determine(decode_frame_t *x_df, uint8_t resolve_idx);
 
 void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
     ESP_LOGI("DEBUG", "CALLING INCREMENTAL DECODE");
-
+    x_df->num_samples += ret_num/SOC_ADC_DIGI_RESULT_BYTES; 
+    printf("%"PRIu32" SAMPLES DECODED \n", x_df->num_samples);
      
     for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
         adc_digi_output_data_t *p = (void*)&adc_stream[i];
@@ -79,7 +80,7 @@ void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_n
         x_df->capture_window[x_df->capture_window_idx] = reading;
         x_df->capture_window_idx = (x_df->capture_window_idx>=CAPTURE_WINDOW_SIZE-1)?
                                         0 : x_df->capture_window_idx+1;
-        uint16_t bin = (x_df->capture_window_sum >> 3) >> 4;
+        uint16_t bin = (x_df->capture_window_sum >> 7) >> 4;
         // uint16_t bin = reading >> 4; 
 
         //NAIVE OVERFLOW HANDLING
@@ -88,7 +89,7 @@ void incrementalDecode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_n
 
         x_df->frame_count += 1;
 
-        if(x_df->frame_count >= x_df->cadence){
+        if(x_df->frame_count >= x_CADENCE){
             x_df->frame_count = 0;
             uint8_t num_bins_picked = pickBins(x_df);
             x_resolve_reset(x_df);
@@ -105,6 +106,8 @@ uint8_t pickBins(decode_frame_t *x_df){
         printf("%04"PRIu16" ", x_df->decode_bins[j]); 
     }
 
+    // return 0; 
+
     // x_df->detect_patterns[0].valid = false;
     // x_df->detect_patterns[1].valid = false; 
     // return 0; 
@@ -112,23 +115,18 @@ uint8_t pickBins(decode_frame_t *x_df){
     uint8_t sig_seen = 0; 
     for (int i = 0; i < NUMBER_DECODE_BINS; i++){
         if (x_df -> decode_bins[i] >= x_SIG_THRESHOLD) {
-            uint16_t cum_sum = x_df -> decode_bins[i]; 
             x_df -> detect_patterns[sig_seen].start = i;
             x_df -> detect_patterns[sig_seen].max = i;
+            x_df -> detect_patterns[sig_seen].valid = true; 
             i++;
-            while (x_df->decode_bins[i] >= x_SIG_THRESHOLD>>1) {
-                cum_sum += x_df -> decode_bins[i]; 
+            while (x_df->decode_bins[i] >= x_SIG_THRESHOLD>>3) {
                 i++;
                 if (x_df->decode_bins[i]>x_df->decode_bins[x_df->detect_patterns[sig_seen].max])
                     x_df->detect_patterns[sig_seen].max = i;
             };
             --i;
-            x_df->detect_patterns[sig_seen].end = i;
-            if (cum_sum > x_SIG_THRESHOLD << 1){
-                x_df->detect_patterns[sig_seen].activation = cum_sum; 
-                sig_seen += 1;
-            }
-             
+            x_df->detect_patterns[sig_seen].end = i; 
+            sig_seen += 1; 
         }
     }
 
@@ -165,8 +163,8 @@ void x_resolve_reset(decode_frame_t *x_df){
 
        ESP_LOGI("DETECTION EVENT", "OLD PATTERN ""%"PRIu8" %"PRIu8" %"PRIu8, x_df->old_pattern.start, x_df->old_pattern.max, x_df->old_pattern.end); 
 
-        ESP_LOGI("DETECTION EVENT", "EMIT %"PRIu8" %"PRIu8" %"PRIu8" %"PRIu16, x_df->detect_patterns[emit].start, x_df->detect_patterns[emit].max, x_df->detect_patterns[emit].end, x_df->detect_patterns[emit].activation); 
-        ESP_LOGI("DETECTION EVENT", "PRESERVE ""%"PRIu8" %"PRIu8" %"PRIu8" %"PRIu16, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].max, x_df->detect_patterns[retain].end, x_df->detect_patterns[retain].activation); 
+        ESP_LOGI("DETECTION EVENT", "EMIT %"PRIu8" %"PRIu8" %"PRIu8, x_df->detect_patterns[emit].start, x_df->detect_patterns[emit].max, x_df->detect_patterns[emit].end); 
+        ESP_LOGI("DETECTION EVENT", "PRESERVE ""%"PRIu8" %"PRIu8" %"PRIu8, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].max, x_df->detect_patterns[retain].end); 
         x_df->old_pattern = x_df->detect_patterns[retain];
         x_determine(x_df, emit);
         x_reset(x_df, 1, x_df->detect_patterns[retain].start, x_df->detect_patterns[retain].end);
@@ -219,7 +217,8 @@ void x_determine(decode_frame_t *x_df, uint8_t resolve_idx){
 void x_initialize(decode_frame_t *x_df){
 
     // THESE SHOULD BE ARGUMENTS
-    memset(x_df->capture_window, 0x00, sizeof(x_df->capture_window[1])*CAPTURE_WINDOW_SIZE); 
+    memset(x_df->capture_window, 0x00, sizeof(x_df->capture_window[1])*CAPTURE_WINDOW_SIZE);
+    x_df->num_samples = 0; 
     x_df->capture_window_sum = 0;
     x_df->capture_window_idx = 0;
     x_df->bin_width = 12;
@@ -230,7 +229,7 @@ void x_initialize(decode_frame_t *x_df){
     x_df->old_pattern.valid = false;
     x_df->num_emits = 0;
     memset(x_df->emit_history, 0, sizeof(x_df->emit_history));
-    x_reset(x_df, 1, 255, 255); 
+    x_reset(x_df, 1, 255, 254); 
 }
 
 void x_reset(decode_frame_t *x_df, uint8_t reset_type, uint8_t preserve_start, uint8_t preserve_end){
