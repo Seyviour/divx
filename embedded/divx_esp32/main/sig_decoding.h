@@ -23,7 +23,7 @@ uint8_t abs_diff(uint8_t a, uint8_t b){
     return (a > b? (a-b): (b-a)); 
 }
 
-char LETTERS[4] = {'A', 'B', 'C', 'D'}; 
+unsigned char LETTERS[4] = {'A', 'B', 'C', 'D'}; 
 
 enum decode_state {
     IDLE,
@@ -43,7 +43,7 @@ typedef struct {
 typedef struct {
     uint32_t num_samples; 
     enum decode_state decode_state; 
-    char decode_history[x_HISTORY_SIZE]; 
+    unsigned char decode_history[x_HISTORY_SIZE]; 
     uint8_t emit_history[x_HISTORY_SIZE]; 
     uint8_t num_emits; 
     uint16_t bin_width;
@@ -250,6 +250,9 @@ void x_determine(decode_frame_t *x_df){
 		}
 		
 		if (i == 0 && x_df->decode_history[x_df->num_emits-2] == DECLARATION_WIDTH-1){
+            if (set_xcode_value(x_df->decode_history)){
+                ESP_LOGI("DECODER", "Failed to set xcode value"); 
+            }
 			x_df->decode_state = TERMINATION; 
 		}  
 		
