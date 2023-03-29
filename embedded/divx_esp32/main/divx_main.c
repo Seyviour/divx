@@ -15,8 +15,8 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_adc/adc_continuous.h"
-#include "sig_decoding.h"
 #include "ble_divx.h"
+#include "sig_decoding.h"
 #include "driver/gpio.h"
 
 
