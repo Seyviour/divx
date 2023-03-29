@@ -16,6 +16,12 @@
 #include "freertos/semphr.h"
 #include "esp_adc/adc_continuous.h"
 #include "sig_decoding.h"
+#include "ble_divx.h"
+#include "driver/gpio.h"
+
+// static const char *TAG = "EXAMPLE";
+
+#define TAG "EXAMPLE"
 
 
 //DMA BUFFER SIZE 
@@ -24,11 +30,9 @@
 #define GET_UNIT(x)        ((x>>3) & 0x1)
 
 //ADC RELATED
-#if CONFIG_IDF_TARGET_ESP32
 #define ADC_CONV_MODE       ADC_CONV_SINGLE_UNIT_1  //ESP32 only supports ADC1 DMA mode
 #define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE1
 static adc_channel_t channel[1] = {ADC_CHANNEL_6};
-#endif
 
 //
 
@@ -37,10 +41,14 @@ static adc_channel_t channel[1] = {ADC_CHANNEL_6};
 #define MOVING_AVERAGE_WINDOW_WIDTH 32
 
 static TaskHandle_t s_task_handle;
-static const char *TAG = "EXAMPLE";
 
 
 
+
+
+#define SCAN_RESET_PIN GPIO_NUM_35
+
+uint8_t result[READ_LEN] = {0};
 
 
 void x_decode(decode_frame_t *x_df, uint8_t *adc_stream, uint32_t ret_num){
@@ -106,11 +114,126 @@ static bool check_valid_data(const adc_digi_output_data_t *data)
 }
 #endif
 
+
+
+esp_err_t conv_start_successfully;
+TaskHandle_t button_start_task = NULL;
+
+void button_start_decode(decode_frame_t *decode_frame, adc_continuous_handle_t handle){
+        while (1) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+            ESP_ERROR_CHECK (adc_continuous_stop(handle));
+            if (conv_start_successfully){
+                ESP_LOGI(TAG, "Failed to stop ADC"); 
+            }
+            memset(result, 0x00, READ_LEN);
+            x_initialize(decode_frame);
+            ESP_ERROR_CHECK(adc_continuous_start(handle));
+            if (conv_start_successfully){
+                ESP_LOGI(TAG, "Failed to start ADC"); 
+            }
+        }
+    }
+
+
+void IRAM_ATTR scan_reset (void* arg){
+
+}
+
+
 void app_main(void)
 {
+
+    // Probably better to do config in specialized functions so the config variables don't
+    // eat up the stack. Config doesn't take up much space atm so simplicity >>>>
+
     esp_err_t ret;
+
+
+    /**
+     * @brief IO initialization -- initialize pin for scan button
+     */
+    gpio_config_t io_conf;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << SCAN_RESET_PIN);
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+
+
+
+    /**
+     * @brief Bluetooth Low Energy initialization
+     * 
+     */
+
+
+    /* Initialize NVS. */
+    ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ret = esp_bt_controller_init(&bt_cfg);
+    if (ret) {
+        ESP_LOGE(DIVX_BLE_TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
+    if (ret) {
+        ESP_LOGE(DIVX_BLE_TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bluedroid_init();
+    if (ret) {
+        ESP_LOGE(DIVX_BLE_TAG, "%s init bluetooth failed: %s", __func__, esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bluedroid_enable();
+    if (ret) {
+        ESP_LOGE(DIVX_BLE_TAG, "%s enable bluetooth failed: %s", __func__, esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_ble_gatts_register_callback(gatts_event_handler);
+    if (ret){
+        ESP_LOGE(DIVX_BLE_TAG, "gatts register error, error code = %x", ret);
+        return;
+    }
+
+    ret = esp_ble_gap_register_callback(gap_event_handler);
+    if (ret){
+        ESP_LOGE(DIVX_BLE_TAG, "gap register error, error code = %x", ret);
+        return;
+    }
+
+    ret = esp_ble_gatts_app_register(DIVX_APP_ID);
+    if (ret){
+        ESP_LOGE(DIVX_BLE_TAG, "gatts app register error, error code = %x", ret);
+        return;
+    }
+
+    esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(500);
+    if (local_mtu_ret){
+        ESP_LOGE(DIVX_BLE_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
+    }
+
+    /**
+     * @brief ADC and Processing
+     * 
+     */
+
+    // esp_err_t ret;
     uint32_t ret_num = 0;
-    uint8_t result[READ_LEN] = {0};
     memset(result, 0xcc, READ_LEN);
 
     s_task_handle = xTaskGetCurrentTaskHandle();
@@ -121,24 +244,21 @@ void app_main(void)
     adc_continuous_evt_cbs_t cbs = {
         .on_conv_done = s_conv_done_cb,
     };
-    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
-    ESP_ERROR_CHECK(adc_continuous_start(handle));
-
-
 
     decode_frame_t decode_frame; 
-    x_initialize(&decode_frame); 
+    x_initialize(&decode_frame);
+
+    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
+    // ESP_ERROR_CHECK(adc_continuous_start(handle));
+    // All calls to start the ADC must come from the start-scan button. 
+
+    // ADC is started within this task and should be stopped by the main task after a decode
+    // fails or is successful 
+    xTaskCreate(button_start_decode, "Start Decoding", 4096, NULL, 10, &button_start_task);
 
     while(1) {
 
-        /**
-         * This is to show you the way to use the ADC continuous mode driver event callback.
-         * This `ulTaskNotifyTake` will block when the data processing in the task is fast.
-         * However in this example, the data processing (print) is slow, so you barely block here.
-         *
-         * Without using this event callback (to notify this task), you can still just call
-         * `adc_continuous_read()` here in a loop, with/without a certain block timeout.
-         */
+        // This notify comes when the ADC has prepared a frame.
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         while (1) {
@@ -147,16 +267,12 @@ void app_main(void)
             if (ret == ESP_OK) {
                 // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32, ret, ret_num);
                 x_decode(&decode_frame, &result, ret_num); 
-                /**
-                 * Because printing is slow, so every time you call `ulTaskNotifyTake`, it will immediately return.
-                 * To avoid a task watchdog timeout, add a delay here. When you replace the way you process the data,
-                 * usually you don't need this delay (as this task will block for a while).
-                 */
                 // vTaskDelay(100);
-            } else if (ret == ESP_ERR_TIMEOUT) {
-                //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
-                break;
             }
+            //  else if (ret == ESP_ERR_TIMEOUT) {
+            //     //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
+            //     break;
+            // }
         }
     }
 
