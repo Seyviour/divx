@@ -33,7 +33,7 @@
 static adc_channel_t channel[1] = {ADC_CHANNEL_6};
 
 // Push button input pin
-#define SCAN_RESET_PIN GPIO_NUM_35
+#define SCAN_RESET_PIN GPIO_NUM_33
 
 static TaskHandle_t s_task_handle; // main task 
 static TaskHandle_t button_start_task_handle = NULL; // Button decode start task 
@@ -129,6 +129,10 @@ static bool check_valid_data(const adc_digi_output_data_t *data)
 
 esp_err_t conv_start_successfully;
 
+decode_frame_t decode_frame;
+adc_continuous_handle_t handle;
+uint8_t result[READ_LEN];
+
 
 /**
  * @brief Decode task: activated by the isr callback of the 'start_decode' push button
@@ -136,16 +140,19 @@ esp_err_t conv_start_successfully;
  * @param decode_frame :Decode frame
  * @param handle : ADC handle 
  */
-void button_start_decode(decode_frame_t *decode_frame, adc_continuous_handle_t handle, uint8_t *result){
+void button_start_decode(){
         while (1) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            ESP_ERROR_CHECK (adc_continuous_stop(handle));
+            // esp_err_t 
+            ESP_ERROR_CHECK_WITHOUT_ABORT (adc_continuous_stop(handle));
+            // adc_continuous_stop(handle); 
+            
             if (conv_start_successfully){
                 ESP_LOGI(TAG, "Failed to stop ADC"); 
             }
             memset(result, 0x00, READ_LEN);
-            x_initialize(decode_frame);
+            x_initialize(&decode_frame);
             ESP_ERROR_CHECK(adc_continuous_start(handle));
             if (conv_start_successfully){
                 ESP_LOGI(TAG, "Failed to start ADC"); 
@@ -253,7 +260,7 @@ void app_main(void)
     }
 
     // Initialize ADC call parameters
-    uint8_t result[READ_LEN] = {0};
+    uint8_t result[READ_LEN];
     uint32_t ret_num = 0;
     memset(result, 0xcc, READ_LEN);
 
@@ -261,7 +268,7 @@ void app_main(void)
     s_task_handle = xTaskGetCurrentTaskHandle();
 
     // ADC Initialization 
-    adc_continuous_handle_t handle = NULL;
+    // adc_continuous_handle_t handle = NULL;
     continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
 
     adc_continuous_evt_cbs_t cbs = {
@@ -269,13 +276,14 @@ void app_main(void)
     };
 
     // Decode Frame Initialization 
-    decode_frame_t decode_frame; 
+    // decode_frame_t decode_frame; 
     x_initialize(&decode_frame);
 
     ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
     // ESP_ERROR_CHECK(adc_continuous_start(handle));
     // All calls to start the ADC must come from the start-scan button. 
 
+    // ESP_ERROR_CHECK(adc_continuous_start(handle)); 
 
     // ADC is started within this task and should be stopped by the main task after a decode
     // fails or is successful 
