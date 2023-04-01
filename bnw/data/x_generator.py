@@ -2,6 +2,11 @@ import svgwrite
 import string
 import random 
 from svgwrite import cm, mm
+from enum import Enum
+
+class generationPatterns(Enum):
+    RANDOM = 0,
+    ASCENDING_TRANSITION = 1
 
 
 class XCodeGenerator: 
@@ -43,8 +48,8 @@ class XCodeGenerator:
 
 
         if code_space is None:
-            if not (len(code_points) % 2):
-                raise Exception ("There should be an odd number of code_points")
+            # if not (len(code_points) % 2):
+            #     raise Exception ("There should be an odd number of code_points")
             
             if len(code_points) < 3:
                 raise Exception ("Number of code points should be >= 3")
@@ -117,7 +122,7 @@ class XCodeGenerator:
         epi_length = 2
         true_length = code_length + decl_length + epi_length
 
-        thiscode = [""] * true_length
+        thiscode = ["A"] * true_length
 
         for i in range(0, decl_length):
             idx = i 
@@ -133,21 +138,39 @@ class XCodeGenerator:
         # elif self.start_pattern[0] == "B":
         #     prev_idx = 0
 
+
+        end_pattern_seen = False
+
         for i in range(code_length):
+            if end_pattern_seen:
+                break
             thiscode[decl_length+i] = code[i]
+            if self.end_pattern == "Y":
+                end_pattern_seen = (thiscode[decl_length+i] == self.code_letters[0]) and (thiscode[decl_length+i-1] == self.code_letters[-1])
+
+        if not end_pattern_seen:
         
+            if self.end_pattern == "Y":
+                thiscode[decl_length + code_length] = self.code_letters[-1]
+                thiscode[decl_length + code_length + 1] = self.code_letters[0]
+            
+            elif self.end_pattern == "Z": 
+                thiscode[decl_length + code_length] = self.code_letters[0]
+                thiscode[decl_length + code_length + 1] = self.code_letters[-1]
 
-        if self.end_pattern == "Y":
-            thiscode[decl_length + code_length] = self.code_letters[-1]
-            thiscode[decl_length + code_length + 1] = self.code_letters[0]
-        
-        elif self.end_pattern == "Z": 
-            thiscode[decl_length + code_length] = self.code_letters[0]
-            thiscode[decl_length + code_length + 1] = self.code_letters[-1]
-
-
+        print(thiscode)
         return "".join(thiscode)
 
+    @staticmethod
+    def numberToBase(n, b):
+        # https://stackoverflow.com/questions/2267362/how-to-convert-an-integer-to-a-string-in-any-base
+        if n == 0:
+            return [0]
+        digits = []
+        while n:
+            digits.append(int(n % b))
+            n //= b
+        return digits[::-1]
     
     def draw_code(self, drawing, code, coord, bar_dim, unit):
 
@@ -183,15 +206,72 @@ class XCodeGenerator:
 
         return coord
 
+    def create_code_from_sequence_transition(self, transition, start=0):
 
+        # append ftw :) 
+        # Really night and day between C and Python lmao
+        # I deserve to relaz and be taken care of 
+
+        curr = 0
+        ret = ""
+        for transition in transition:
+            curr = (curr + transition+1) % self.code_space
+            ret += (self.code_letters[curr])
         
-        
-    def generate_random_page (self, page_dim, margin,  bar_dim, code_length, filename, unit=mm):
+        return ret
+
+    def generate_code_from_sequence_transitions (self, seq_length):
+
+        for transition in self.generate_sequence_transitions(seq_length):
+            yield self.create_code_from_sequence_transition(transition)
+
+
+    def generate_wrapped_code_from_sequence_transitions(self, seq_length):
+
+        for code in self.generate_code_from_sequence_transitions(seq_length):
+            yield self.wrap_code(code)
+
+    def generate_sequence_transitions (self, seq_length):
+
+        curr = 0
+        base = self.code_space-1
+
+
+        # If this was C, I would be racking my brain about how to minimize the memory assignments/footpring here
+        # This is Python so YOLO! :)
+        # Really no point stressing over complexity of functions you'll have to run once in every 20 business days
+        # If/When this has to be more efficient, I'll make it so. Peace!
+        while curr < base ** seq_length:
+            based =  self.numberToBase(curr, base)
+            deficit = seq_length - len(based)
+            deficit = (deficit if deficit > 0 else 0)
+            curr += 1
+            if (deficit):
+                ret = [0] *  deficit
+                ret.extend(based)
+            else:
+                ret = list(based)
+
+            yield ret
+
+
+
+    def create_wrap_random_code(self, code_length):
+        rand_code = self.create_random_code(code_length)
+        wrapped_rand_code = self.wrap_code(rand_code)
+
+        return wrapped_rand_code
+
+    def generate_wrapped_random_code(self, code_length):
+        while (True):
+            yield self.create_wrap_random_code(code_length)
+    
+    def generate_code_page(self, page_dim, margin, bar_dim, code_length, filename, unit=mm, gen_pattern=generationPatterns.RANDOM):
 
         bar_x_dim, bar_y_dim = bar_dim
         page_x_dim, page_y_dim = page_dim
         x_margin, y_margin = margin
-        dwg = svgwrite.Drawing(filename=filename , debug=True)
+        dwg = svgwrite.Drawing(filename=filename, size=(f'{page_x_dim}mm', f'{page_y_dim}mm'), debug=True, viewBox=f'0 0 {page_x_dim} {page_y_dim}')
 
         x_start = x_margin
         x_end = page_x_dim - x_margin
@@ -202,21 +282,37 @@ class XCodeGenerator:
 
         curr_coord = (x_start, y_start)
 
-        dwg.add(dwg.rect((0,0), size=('100%', '100%'), fill='rgb(255,255,255)'))
+        dwg.add(dwg.rect(size=('100%', '100%'), fill='rgb(255,255,255)'))
+
+        if (gen_pattern == generationPatterns.RANDOM):
+            xgenerator = self.generate_wrapped_random_code(code_length)
+        
+        elif (gen_pattern == generationPatterns.ASCENDING_TRANSITION):
+            xgenerator = self.generate_wrapped_code_from_sequence_transitions(code_length)
+        
+        else:
+            print("Defaulting to random generation")
+            xgenerator = self.generate_code_from_sequence_transitions(code_length)
+            
 
         while curr_coord[1] < y_end:
 
             # print("here")
             while curr_coord[0] < x_end:
 
-                rand_code = self.create_random_code(code_length)
-                rand_code = self.wrap_code(rand_code)
+                try:
+                    code = next(xgenerator)
+                except:
+                    break
 
-                curr_coord = self.draw_code(drawing=dwg, coord=curr_coord, code=rand_code, bar_dim=bar_dim, unit=unit)
+                # print ("Trying to print code")
+                # print(code)
+
+                curr_coord = self.draw_code(drawing=dwg, coord=curr_coord, code=code, bar_dim=bar_dim, unit=unit)
                 
-                dwg.add(dwg.rect(curr_coord, size=(bar_dim[0]*unit, 3*bar_dim[1]*unit), fill='rgb(255,255,255)'))
+                dwg.add(dwg.rect(curr_coord, size=(bar_x_dim*unit, bar_y_dim*unit), fill='rgb(255,255,255)'))
 
-                curr_coord = (curr_coord[0] + bar_x_dim*3, curr_coord[1])
+                curr_coord = (curr_coord[0] + bar_x_dim, curr_coord[1])
 
             # update y_coord to start of next possible line
             curr_coord = (x_start, curr_coord[1] + bar_y_dim)
@@ -224,6 +320,13 @@ class XCodeGenerator:
             curr_coord = (x_start, curr_coord[1] + bar_y_dim)
 
         dwg.save()
+        
+    def generate_random_page (self, page_dim, margin,  bar_dim, code_length, filename, unit=mm):
+        self.generate_code_page(page_dim, margin, bar_dim, code_length, filename, unit, gen_pattern=generationPatterns.RANDOM)
+
+    def generate_page_in_ascending_sequence(self, page_dim, margin, bar_dim, code_length, filename, unit=mm):
+        self.generate_code_page(page_dim, margin, bar_dim, code_length, filename, unit, gen_pattern=generationPatterns.ASCENDING_TRANSITION)
+
 
 
 
@@ -232,29 +335,43 @@ if __name__ == "__main__":
 
     a4_dim = (210, 297)
     page_margin = (10, 20)
-    bar_dim = (1, 2.5)
+    bar_dim = (2, 4)
 
 
-    for start_pattern in ("A1", "B1", "B2", "B1"):
-        for end_pattern in ("Y", "Z"):
-            for code_space in (3, 5): 
-                file_name = f'{start_pattern}-{end_pattern}-{code_space}.svg'
-                thisGenerator = XCodeGenerator(
-                    start_pattern=start_pattern,
-                    end_pattern=end_pattern,
-                    code_space=code_space)
+    # for start_pattern in ("A1", "B1", "B2", "B1"):
+    #     for end_pattern in ("Y", "Z"):
+    #         for code_space in (3, 5): 
+    #             file_name = f'{start_pattern}-{end_pattern}-{code_space}.svg'
+    #             thisGenerator = XCodeGenerator(
+    #                 start_pattern=start_pattern,
+    #                 end_pattern=end_pattern,
+    #                 code_space=code_space)
                 
-                thisGenerator.generate_random_page(
-                    page_dim = a4_dim,
-                    margin = page_margin,
-                    bar_dim = bar_dim,
-                    code_length = 5,
-                    filename=file_name
-                )
+                # thisGenerator.generate_random_page(
+                #     page_dim = a4_dim,
+                #     margin = page_margin,
+                #     bar_dim = bar_dim,
+                #     code_length = 5,
+                #     filename=file_name
+                # )
 
 
 
-    # thisGenerator = XCodeGenerator("B2", "Z", 3)
+    thisGenerator = XCodeGenerator("A1", "Y", 4)
+    # thisGenerator.generate_random_page(
+    #     page_dim = a4_dim,
+    #     margin = page_margin,
+    #     bar_dim = bar_dim,
+    #     code_length = 5,
+    #     filename="A1-Z-4.svg"
+    # )
+    thisGenerator.generate_page_in_ascending_sequence(
+        page_dim = a4_dim,
+        margin = page_margin,
+        bar_dim = bar_dim,
+        code_length = 5,
+        filename="A1-Z-4-sequenced.svg"
+    )
     # print(thisGenerator.code_points)
     # print(thisGenerator.wrap_code("ABC"))
     # print(thisGenerator.create_random_code(20))
