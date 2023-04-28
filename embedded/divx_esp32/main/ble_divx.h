@@ -1,3 +1,4 @@
+
 /**
  * @file ble_divx.h
  * @author your name (you@domain.com)
@@ -9,9 +10,9 @@
  * 
  */
 
-#ifndef x_HEADER_BLE
 
-#define x_HEADER_BLE
+#ifndef BLE_DIVX_H
+#define BLE_DIVX_H
 
 
 #include "freertos/FreeRTOS.h"
@@ -42,7 +43,7 @@
  * 
  */
 
-#define DIVX_CHAR_VAL_LEN_MAX 10
+#define DIVX_CHAR_VAL_LEN_MAX 20
 #define CHAR_DECLARATION_SIZE (sizeof(uint8_t))
 
 #define ADV_CONFIG_FLAG         (1<<0)
@@ -63,6 +64,7 @@ static uint8_t adv_config_done = 0;
 
 uint16_t divx_handle_table[DIVX_IDX_NB]; 
 
+static uint16_t divx_conn_id = 0;
 static uint8_t service_uuid[16] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
@@ -263,7 +265,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                         uint8_t notify_data[15];
                         for (int i = 0; i < sizeof(notify_data); ++i)
                         {
-                            notify_data[i] = i % 0xff;
+                            // notify_data[i] = i % 0xff;
+                            notify_data[i] = '.';
                         }
                         //the size of notify_data[] need less than MTU size
                         esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, divx_handle_table[DIVX_IDX_XCODE_VAL],
@@ -273,7 +276,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                         uint8_t indicate_data[15];
                         for (int i = 0; i < sizeof(indicate_data); ++i)
                         {
-                            indicate_data[i] = i % 0xff;
+                            // indicate_data[i] = i % 0xff;
+                            indicate_data[i] = '.';
                         }
                         //the size of indicate_data[] need less than MTU size
                         esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, divx_handle_table[DIVX_IDX_XCODE_VAL],
@@ -315,6 +319,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         case ESP_GATTS_CONNECT_EVT:
             ESP_LOGI(DIVX_BLE_TAG, "ESP_GATTS_CONNECT_EVT, conn_id = %d", param->connect.conn_id);
             esp_log_buffer_hex(DIVX_BLE_TAG, param->connect.remote_bda, 6);
+            divx_conn_id = param->connect.conn_id; 
             esp_ble_conn_update_params_t conn_params = {0};
             memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
             /* For the iOS system, please refer to Apple official documents about the BLE connection parameters restrictions. */
@@ -385,9 +390,12 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 }
 
 
-esp_err_t set_xcode_value(uint8_t *xvalue){
-    esp_err_t ret = esp_ble_gatts_set_attr_value(divx_handle_table[DIVX_IDX_XCODE_VAL], sizeof(xcode_char_value), xvalue); 
+esp_err_t set_notify_xcode_value(uint8_t *xvalue){
+    esp_err_t ret = esp_ble_gatts_set_attr_value(divx_handle_table[DIVX_IDX_XCODE_VAL], sizeof(xcode_char_value), xvalue);
+    ret = esp_ble_gatts_send_indicate(divx_profile_tab[PROFILE_APP_IDX].gatts_if, divx_conn_id, divx_handle_table[DIVX_IDX_XCODE_VAL],
+                                                sizeof(xcode_char_value), xvalue, false);
     return ret;
 }
+
 
 #endif
