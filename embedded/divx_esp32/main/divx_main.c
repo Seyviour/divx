@@ -18,6 +18,7 @@
 #include "ble_divx.h"
 #include "sig_decoding.h"
 #include "driver/gpio.h"
+#include "esp_timer.h"
 
 
 
@@ -89,7 +90,7 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
 
     adc_continuous_config_t dig_cfg = {
-        .sample_freq_hz = 20 * 1000,
+        .sample_freq_hz = 30 * 1000,
         .conv_mode = ADC_CONV_MODE,
         .format = ADC_OUTPUT_TYPE,
     };
@@ -140,29 +141,48 @@ uint8_t result[READ_LEN];
  * @param decode_frame :Decode frame
  * @param handle : ADC handle 
  */
+
+uint64_t prev_button_time = 0; 
+
 void button_start_decode(){
         while (1) {
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY)){;
 
-            // esp_err_t 
-            ESP_ERROR_CHECK_WITHOUT_ABORT (adc_continuous_stop(handle));
-            // adc_continuous_stop(handle); 
+            uint64_t curr_time = esp_timer_get_time(); 
+
+            if (curr_time - prev_button_time < 5000000){
+                continue;
+            }
+
+            prev_button_time = curr_time; 
             
-            if (conv_start_successfully){
-                ESP_LOGI(TAG, "Failed to stop ADC"); 
+            ESP_LOGI("DIVX_MAIN", "BUTTON_START_DECODE"); 
+            // esp_err_t 
+
+
+            conv_start_successfully = adc_continuous_stop(handle);
+
+            // adc_continuous_stop(handle); 
+            if (!conv_start_successfully){
+                decode_frame.decode_state = TERMINATION;
+                
+                continue;  
+                // ESP_LOGI(TAG, "Failed to stop ADC"); 
             }
-            memset(result, 0x00, READ_LEN);
-            x_initialize(&decode_frame);
-            ESP_ERROR_CHECK(adc_continuous_start(handle));
-            if (conv_start_successfully){
-                ESP_LOGI(TAG, "Failed to start ADC"); 
-            }
+
+            memset(result, 0x00, sizeof(result));
+            x_prepare_decoder(&decode_frame);
+            vTaskDelay(pdMS_TO_TICKS(1200)); 
+            ESP_ERROR_CHECK_WITHOUT_ABORT(adc_continuous_start(handle));
+            // if (conv_start_successfully){
+            //     ESP_LOGI(TAG, "Failed to start ADC"); 
+            // }
+        }
         }
     }
 
 
 static bool IRAM_ATTR scan_button_isr_handler (void* arg){
-
     BaseType_t mustYield = pdFALSE;
     //Notify that the start_decode button has been pushed
     //Todo: Handle debounce and quick presses
@@ -188,7 +208,7 @@ void app_main(void)
     io_conf.pin_bit_mask = (1ULL << SCAN_RESET_PIN);
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
 
     gpio_config(&io_conf); 
 
@@ -292,15 +312,35 @@ void app_main(void)
     while(1) {
 
         // This notify comes when the ADC has prepared a frame.
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (!ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) continue;
+
+        vTaskDelay(100/portTICK_PERIOD_MS);
 
         while (1) {
             ret = adc_continuous_read(handle, result, READ_LEN, &ret_num, 0);
             // int num_samples = 0; 
             if (ret == ESP_OK) {
-                // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32, ret, ret_num);
-                x_decode(&decode_frame, &result, ret_num); 
-                // vTaskDelay(100);
+            //     // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32, ret, ret_num);
+            //     if (decode_frame.decode_state == TERMINATION){
+
+            //         //Stop ADC
+            //         // vTaskDelay(50);
+            //         ESP_LOGI("DIVX_MAIN", "Stopping continuous mode ADC");
+            //         // ESP_ERROR_CHECK_WITHOUT_ABORT(adc_continuous_stop(handle));
+
+            //         // ESP_ERROR_CHECK_WITHOUT_ABORT(adc_continuous_stop(handle)); 
+            //         break; 
+            //     }
+
+                if (decode_frame.decode_state != TERMINATION)
+                    x_decode(&decode_frame, &result, ret_num);
+
+                
+                
+            } else{
+                break; 
+                if (ret == ESP_ERR_TIMEOUT) 
+                    break;
             }
             //  else if (ret == ESP_ERR_TIMEOUT) {
             //     //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data

@@ -227,8 +227,12 @@ class XCodeGenerator:
 
 
     def generate_wrapped_code_from_sequence_transitions(self, seq_length):
+        seen = set()
 
         for code in self.generate_code_from_sequence_transitions(seq_length):
+            if code in seen:
+                continue 
+            seen.add(code)
             yield self.wrap_code(code)
 
     def generate_sequence_transitions (self, seq_length):
